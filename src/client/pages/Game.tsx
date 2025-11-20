@@ -10,6 +10,7 @@ import { GameSettings } from '../components/GameSettings';
 import { LeaderboardModal } from '../components/LeaderboardModal';
 import { usePuzzleState } from '../hooks/usePuzzleState';
 import { useLeaderboard } from '../hooks/useLeaderboard';
+import { useSocialShare } from '../hooks/useSocialShare';
 import { Puzzle } from 'lucide-react';
 import { ArrowLeft, Trophy } from 'lucide-react';
 
@@ -41,6 +42,8 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     refreshLeaderboard,
   } = useLeaderboard(puzzleId);
 
+  const { submitCompletionComment } = useSocialShare();
+
   const progress = getProgress();
 
   // ────── Completion → submit ──────
@@ -51,7 +54,6 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
       setScoreSubmitted(true);
     }
   }, [gameState.isComplete, showCompletionModal, username, submitScore]);
-  
 
   // ────── Milestone logging ──────
   useEffect(() => {
@@ -84,20 +86,31 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
   };
 
   const handleShare = () => {
-    const grid = Array.from({ length: gridSize }, (_, row) =>
-      Array.from({ length: gridSize }, (_, col) => {
-        const piece = gameState.pieces.find(
-          (p) => p.currentPosition?.row === row && p.currentPosition?.col === col
-        );
-        return piece ? '🟩' : '⬜';
-      }).join('')
-    ).join('\n');
+    // const timeStr = gameState.elapsedTime ? `${Math.floor(gameState.elapsedTime / 60)}m ${gameState.elapsedTime % 60}s` : 'unknown time';
+    // const streakEmoji = streak >= 10 ? 'fire' : streak >= 3 ? 'fire' : '';
 
-    const shareText = `🧩 Jigsawdit\n${grid}\n in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!`;
-    onBackToHome()
-    // navigator.clipboard.writeText(shareText).then(() => {
-    //   alert('Result copied to clipboard!');
-    // });
+    // const grid = Array.from({ length: gridSize }, (_, row) =>
+    //   Array.from({ length: gridSize }, (_, col) => {
+    //     const piece = gameState.pieces.find(
+    //       (p) => p.currentPosition?.row === row && p.currentPosition?.col === col
+    //     );
+    //     return piece ? '🟩' : '⬜';
+    //   }).join('')
+    // ).join('\n');
+
+    // const commentText = `Jigsawdit complete!\n\n` +
+    //   `Time: ${timeStr}\n` +
+    //   `${streak ? `Streak: ${streak} day${streak > 1 ? 's' : ''} ${streakEmoji}\n` : ''}` +
+    //   (grid ? `\n${grid}\n` : '') +
+    //   `\n#Jigsawdit`;
+
+    // const shareText =
+    //   `🧩 Jigsawdit in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!` +
+    //   `\n#Jigsawdit`;
+      const shareText =
+      `🧩 Jigsawdit in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!`;
+    submitCompletionComment(shareText);
+    onBackToHome();
   };
 
   const handleGridSizeChange = (size: number) => {

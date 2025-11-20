@@ -1,6 +1,7 @@
 import express from 'express';
 import { InitResponse, IncrementResponse, DecrementResponse } from '../shared/types/api';
 import { redis, reddit, createServer, context, getServerPort, scheduler } from '@devvit/web/server';
+import { RunAs } from '@devvit/public-api';
 import { createPost } from './core/post';
 import { leaderboardKey, leaderboardCacheKey } from './redisKeys';
 import { LeaderboardEntry } from '../types';
@@ -289,8 +290,49 @@ router.get('/api/load', async (req, res) => {
   res.json({ found: true, data: JSON.parse(data) });
 });
 
+// POST game score
+router.post('/api/submitCompletionComment', async (req, res) => {
+  try {
+    const { subredditName, postId, user } = context;
+    if (!subredditName) {
+      throw new Error('subredditName is required');
+    }
+    if (!postId) {
+      return res.status(400).json({ error: 'No post context (are you in an interactive post?)' });
+    }
+    const { comment = '' } = req.body as {
+      comment: string;
+    };
+
+    await reddit.submitComment({
+      id: postId, // Replace with the actual post ID
+      text: comment,
+      runAs: 'USER', // Optional: specify the user to run as
+    });
+
+    res.json({ success: true, message: 'Completion comment posted!' });
+  } catch (error) {
+    console.error('Failed to post completion comment:', error);
+    res.status(500).json({ error: 'Failed to post comment' });
+  }
+});
+
 // Scheduling try
 router.post('/internal/scheduler/post-daily-puzzle', async (req, res) => {
+
+//   **DAILY JIGSAWDIT IS LIVE!** Jigsaw piece rocket
+
+// **Theme**: Meme Monday  
+// **Image**: Top post from r/dankmemes (SFW)  
+// **Difficulty**: 4x4 (Medium)  
+// **Play →** [Interactive Post]
+
+// **LEADERBOARD**  
+// 1. u/snaps - 0:58 Jigsaw piece  
+// 2. u/fast - 1:12  
+// 3. u/you? - ???
+
+// **SHARE YOUR SOLVE**  
   // In scheduler (run daily)
   const themes = [
     'Meme Monday',
@@ -304,57 +346,56 @@ router.post('/internal/scheduler/post-daily-puzzle', async (req, res) => {
 
   try {
     // If the queue is empty, return
-    const hasQueue = await redis.exists('data:queue');
-    if (!hasQueue) {
-      res.status(200).json({
-        status: 'success',
-        message: 'No items to process',
-      });
-      return;
-    }
+    // const hasQueue = await redis.exists('data:queue');
+    // if (!hasQueue) {
+    //   res.status(200).json({
+    //     status: 'success',
+    //     message: 'No items to process',
+    //   });
+    //   return;
+    // }
 
     const { subredditName } = context;
-    //  const subredditName = 'Jigsawdit';
     if (!subredditName) {
       res.status(400).json({ status: 'error', message: 'subredditName is required' });
       return;
     }
 
-    // Obtain levelName and gameData from Redis queue
-    const queuedItems = await redis.hGetAll('data:queue');
+    // Create new post!
+    // await reddit.submitCustomPost({
+    //   subredditName: subredditName,
+    //   title: 'DAILY JIGSAWDIT: ',
+    //   splash: {
+    //     appDisplayName: 'Level ',
+    //     heading: 'Level ',
+    //     description: `Solve today’s r/aww  ${theme} masterpiece!`,
+    //     // backgroundUri: 'default-splash.png',
+    //     buttonLabel: 'Ckick to Start',
+    //     // appIconUri: 'default-icon.png'
+    //   },
 
-    // For each record found...
-    const records = Object.entries(queuedItems);
-    for (const record of records) {
-      // Extract levelName and gameData from record
-      const [levelName, gameData] = record;
-
-      console.log('levelName', levelName);
-      console.log('gameData', gameData);
-
-      // Add game data to redis (level name as key)
-      // NOTE: This is not required, but an example if "game data" is larger than the 2kb allowed in postData
-
-      // Create new post!
-      await reddit.submitCustomPost({
-        subredditName: subredditName,
-        title: 'DAILY JIGSAWDIT: ',
-        splash: {
-          appDisplayName: 'Level ',
-          heading: 'Level ',
-          description: `Solve today’s r/aww  ${theme} masterpiece!`,
-          // backgroundUri: 'default-splash.png',
-          buttonLabel: 'Ckick to Start',
-          // appIconUri: 'default-icon.png'
-        },
-
-        // Note postData contains the level name, which will be used in the init API to fetch the level game data
-        // from the redis key set above!
-      });
-    }
+    // });
+    await reddit.submitCustomPost({
+      splash: {
+        // Splash Screen Configuration
+        appDisplayName: 'jigsawdit',
+        backgroundUri: 'default-splash.png',
+        buttonLabel: 'Click to Start',
+        description: `Solve today’s r/aww  ${theme} masterpiece!`,
+        entryUri: 'index.html',
+        heading: 'Welcome to the Game!',
+        appIconUri: 'default-icon.png',
+      },
+      postData: {
+        gameState: 'initial',
+        score: 0,
+      },
+      subredditName: subredditName,
+      title: 'DAILY JIGSAWDIT: ',
+    });
 
     // Remove all items from the queue
-    await redis.del('data:queue');
+    // await redis.del('data:queue');
     res.json({ status: 'success', message: `Posts created in subreddit ${subredditName}` });
   } catch (error) {
     res.status(400).json({

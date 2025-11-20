@@ -44,7 +44,7 @@ export const useLeaderboard = (puzzleId: string) => {
     }
   };
 
-  // Poll every 3 seconds for updates
+  // Poll every 60 seconds for updates
   useEffect(() => {
     fetchLeaderboard(); // Initial load
     const interval = setInterval(fetchLeaderboard, 60000);

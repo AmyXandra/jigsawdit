@@ -48,7 +48,7 @@
     "tasks": {
       "post-daily-puzzle-task": {
         "endpoint": "/internal/scheduler/post-daily-puzzle",
-        "cron": "*/5 * * * *"
+        "cron": "*/30 7 * * *"
       }
     }
   }
