@@ -42,7 +42,8 @@
         "SUBMIT_COMMENT",
         "SUBSCRIBE_TO_SUBREDDIT"
       ]
-    }
+    },
+    "media": true
   },
   "scheduler": {
     "tasks": {
@@ -51,6 +52,9 @@
         "cron": "*/30 7 * * *"
       }
     }
+  },
+  "forms": {
+    "imageForm": "/internal/form/image-submit"
   }
   
 }

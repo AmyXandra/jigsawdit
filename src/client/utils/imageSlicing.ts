@@ -6,7 +6,14 @@ export const sliceImageIntoPieces = async (
 ): Promise<PuzzlePiece[]> => {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    img.crossOrigin = 'anonymous';
+    
+    // For local images (not base64 or data URLs), set crossOrigin
+    const isDataUrl = imageUrl.startsWith('data:');
+    const isLocalPath = imageUrl.startsWith('/');
+    
+    if (isLocalPath && !isDataUrl) {
+      img.crossOrigin = 'anonymous';
+    }
 
     img.onload = () => {
       const canvas = document.createElement('canvas');

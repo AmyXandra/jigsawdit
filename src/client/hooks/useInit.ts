@@ -2,18 +2,12 @@
 import { useState, useEffect } from 'react';
 import type { InitResponse } from '../../shared/types/api';
 
-interface InitData {
-  postId: string;
-  count: number;
-  username: string;
-}
-
 export const useInit = () => {
-  const [data, setData] = useState<InitData | null>(null);
+  const [data, setData] = useState<InitResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [postId, setPostId] = useState<string | null>(null);
-  const [username, setUsername] = useState<string | null>(null);
+  const [postId, setPostId] = useState<string>('');
+  const [username, setUsername] = useState<string>('');
 
   useEffect(() => {
     const init = async () => {
@@ -27,10 +21,10 @@ export const useInit = () => {
         setLoading(false);
         setPostId(data.postId);
         setUsername(data.username);
-        setPostId(data.postId);
       } catch (err) {
         console.error('Failed to init counter', err);
-        setError(err.message);
+        const errorMessage = err instanceof Error ? err.message : 'Unknown error';
+        setError(errorMessage);
         setLoading(false);
       }
     };

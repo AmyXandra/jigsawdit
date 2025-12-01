@@ -18,16 +18,10 @@ export interface GameState {
 export interface LeaderboardEntry {
   username: string;
   time: number;
-  completedAt: string;
+  completedAt?: string;
 }
 
 export interface DragItem {
   pieceId: string;
   type: string;
 }
-
-export type LeaderboardEntry = {
-  username: string;
-  time: number;          // seconds (or ms – keep the same unit you used before)
-  completedAt: string;   // ISO timestamp
-};

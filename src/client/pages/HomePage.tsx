@@ -1,17 +1,24 @@
 import { useState } from 'react';
 import { Puzzle, Trophy, Users, Flame, Play } from 'lucide-react';
 import { LeaderboardModal } from '../components/LeaderboardModal';
-import { Leaderboard } from '../components/Leaderboard';
 import { useLeaderboard } from '../hooks/useLeaderboard';
 import { useUserStats } from '../hooks/useUserStats';
+
+interface CustomPuzzleData {
+  imageUrl: string;
+  gridSize: number;
+  difficulty: string;
+  creatorUsername: string;
+}
 
 interface HomePageProps {
   username: string;
   puzzleId: string;
   onStartGame: () => void;
+  customPuzzle?: CustomPuzzleData | null | undefined;
 }
 
-export const HomePage = ({ username, onStartGame, puzzleId }: HomePageProps) => {
+export const HomePage = ({ username, onStartGame, puzzleId, customPuzzle }: HomePageProps) => {
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
   const {
     leaderboard,
@@ -30,7 +37,16 @@ export const HomePage = ({ username, onStartGame, puzzleId }: HomePageProps) => 
             <Puzzle className="w-12 h-12 text-blue-600" />
             <h1 className="text-4xl font-bold text-gray-800">Jigsawdit</h1>
           </div>
-          <p className="text-xl text-gray-600">Challenge yourself with daily puzzles</p>
+          {customPuzzle ? (
+            <div className="space-y-2">
+              <p className="text-xl text-purple-600 font-semibold">Custom Puzzle Challenge</p>
+              <p className="text-gray-600">
+                Created by u/{customPuzzle?.creatorUsername} • {customPuzzle?.difficulty?.charAt(0).toUpperCase() + customPuzzle?.difficulty?.slice(1)} • {customPuzzle?.gridSize}x{customPuzzle?.gridSize}
+              </p>
+            </div>
+          ) : (
+            <p className="text-xl text-gray-600">Challenge yourself with daily puzzles</p>
+          )}
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8 mb-6">
@@ -89,7 +105,7 @@ export const HomePage = ({ username, onStartGame, puzzleId }: HomePageProps) => 
             <p className="text-center text-gray-500 py-8">No scores yet. Be the first!</p>
           ) : (
             <div className="space-y-3">
-              {topThree.map((entry, index) => {
+              {topThree.map((entry:any, index) => {
                 const medal = index === 0 ? '🥇' : index === 1 ? '🥈' : '🥉';
                 const isCurrentUser = entry.username === username;
 

@@ -1,10 +1,8 @@
 import express from 'express';
 import { InitResponse, IncrementResponse, DecrementResponse } from '../shared/types/api';
-import { redis, reddit, createServer, context, getServerPort, scheduler } from '@devvit/web/server';
-import { RunAs } from '@devvit/public-api';
+import { redis, reddit, createServer, context, getServerPort } from '@devvit/web/server';
 import { createPost } from './core/post';
-import { leaderboardKey, leaderboardCacheKey } from './redisKeys';
-import { LeaderboardEntry } from '../types';
+import { media } from '@devvit/media';
 
 const app = express();
 
@@ -16,6 +14,20 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(express.text());
 
 const router = express.Router();
+
+// CORS middleware for all routes
+router.use((req, res, next) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  
+  if (req.method === 'OPTIONS') {
+    res.sendStatus(200);
+    return;
+  }
+  
+  next();
+});
 
 router.get<{ postId: string }, InitResponse | { status: string; message: string }>(
   '/api/init',
@@ -32,18 +44,34 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
     }
 
     try {
-      const [count, username, user] = await Promise.all([
+      const [count, username, post] = await Promise.all([
         redis.get('count'),
         reddit.getCurrentUsername(),
-        reddit.getCurrentUser(),
+        reddit.getPostById(postId),
       ]);
+
+      // Get custom puzzle data from post if it exists
+      let customPuzzleData = null;
+      try {
+        const postData = await post.getPostData();
+        if (postData && typeof postData === 'object') {
+          customPuzzleData = {
+            imageUrl: postData.imageUrl as string,
+            gridSize: postData.gridSize as number,
+            difficulty: postData.difficulty as string,
+            creatorUsername: postData.creatorUsername as string,
+          };
+        }
+      } catch (error) {
+        console.log('No custom puzzle data found for this post');
+      }
 
       res.json({
         type: 'init',
         postId: postId,
         count: count ? parseInt(count) : 0,
         username: username ?? 'anonymous',
-        user: user ?? {},
+        customPuzzle: customPuzzleData,
       });
     } catch (error) {
       console.error(`API Init Error for post ${postId}:`, error);
@@ -59,7 +87,7 @@ router.get<{ postId: string }, InitResponse | { status: string; message: string 
 router.post<{ postId: string }, IncrementResponse | { status: string; message: string }, unknown>(
   '/api/increment',
   async (_req, res): Promise<void> => {
-    const { postId } = req.context;
+    const { postId } = context;
     if (!postId) {
       res.status(400).json({
         status: 'error',
@@ -79,7 +107,7 @@ router.post<{ postId: string }, IncrementResponse | { status: string; message: s
 router.post<{ postId: string }, DecrementResponse | { status: string; message: string }, unknown>(
   '/api/decrement',
   async (_req, res): Promise<void> => {
-    const { postId } = req.context;
+    const { postId } = context;
     if (!postId) {
       res.status(400).json({
         status: 'error',
@@ -129,12 +157,22 @@ router.post('/internal/menu/post-create', async (_req, res): Promise<void> => {
   }
 });
 
+router.post('/internal/form/image-submit', async (req, res): Promise<void> => {
+  const { myImage } = req.body;
+  // Use the mediaUrl to store in redis and display it in an <image> block, or send to external service to modify
+  console.log('Image uploaded:', myImage);
+
+  res.json({
+    showToast: 'Image uploaded successfully!',
+    image: myImage,
+  });
+});
+
 // GET leaderboard (top 5)
 router.get('/api/leaderboard/:puzzleId', async (req, res) => {
   const { puzzleId } = req.params;
   const key = `lb:${puzzleId}`;
-  const today = new Date().toISOString().split('T')[0];
-  const entries = await redis.zRange(key, 0, 4, { reverse: true });
+  const entries = await redis.zRange(key, 0, 4, { by: 'rank', reverse: true });
   const leaderboard = entries.map((e: any) => ({
     username: e.member,
     time: Number(-e.score), // We stored negative time
@@ -157,33 +195,9 @@ router.post('/api/submitScore', async (req, res) => {
 });
 
 // Add these routes
-router.get('/api/appUser', async (req, res) => {
-  try {
-    const user = await reddit.getAppUser();
-    console.log('user api', username);
-
-    res.json({ username: username ?? 'Guest' });
-  } catch (error) {
-    res.json({ username: 'Guest' });
-  }
-});
-
-router.get('/api/currentUser', async (req, res) => {
-  try {
-    const user = await reddit.getCurrentUser();
-
-    res.json({ username: user ?? 'Guest' });
-  } catch (error) {
-    res.json({ username: 'Guest' });
-  }
-});
-
-// Add these routes
-router.get('/api/currentUsername', async (req, res) => {
+router.get('/api/currentUser', async (_req, res) => {
   try {
     const username = await reddit.getCurrentUsername();
-    console.log('username api', username);
-
     res.json({ username: username ?? 'Guest' });
   } catch (error) {
     res.json({ username: 'Guest' });
@@ -199,7 +213,7 @@ router.get('/api/userStreak/:username', async (req, res) => {
 });
 
 // GET daily players
-router.get('/api/dailyPlayers', async (req, res) => {
+router.get('/api/dailyPlayers', async (_req, res) => {
   const today = new Date().toISOString().split('T')[0];
   const count = (await redis.zCard(`daily:${today}`)) || 0;
   res.json({ count });
@@ -207,12 +221,15 @@ router.get('/api/dailyPlayers', async (req, res) => {
 
 // POST update streak
 router.post('/api/updateStreak', async (req, res) => {
-  const { username } = req.body;
-  if (!username) return res.status(400).json({ error: 'Missing username' });
+  const { username } = req.body as { username?: string };
+  if (!username || typeof username !== 'string') {
+    return res.status(400).json({ error: 'Missing username' });
+  }
 
-  const today = new Date().toISOString().split('T')[0];
-  const lastKey = `last:${username}`;
-  const streakKey = `streak:${username}`;
+  const usernameStr: string = username; // Type assertion for TypeScript
+  const today: string = new Date().toISOString().split('T')[0] as string;
+  const lastKey = `last:${usernameStr}`;
+  const streakKey = `streak:${usernameStr}`;
   const dailyKey = `daily:${today}`;
 
   try {
@@ -237,7 +254,7 @@ router.post('/api/updateStreak', async (req, res) => {
     await Promise.all([
       redis.set(lastKey, today),
       redis.set(streakKey, streak.toString()),
-      redis.zAdd(dailyKey, { member: username, score: streak }),
+      redis.zAdd(dailyKey, { member: usernameStr, score: streak }),
     ]);
 
     res.json({ success: true, streak });
@@ -261,20 +278,21 @@ router.post('/api/save', async (req, res) => {
   }
 
   const key = `jigsawdit:save:${postId}:${userId}`;
+  const thirtyDaysInMs = 30 * 24 * 60 * 60 * 1000;
   await redis.set(
     key,
     JSON.stringify({
       ...body,
       savedAt: new Date().toISOString(),
     }),
-    { expiration: '30d' }
+    { expiration: new Date(Date.now() + thirtyDaysInMs) }
   ); // keep for 30 days
 
   res.json({ success: true });
 });
 
 // === LOAD GAME ===
-router.get('/api/load', async (req, res) => {
+router.get('/api/load', async (_req, res) => {
   const { postId, userId } = context;
   if (!postId || !userId) {
     return res.json({ found: false });
@@ -283,17 +301,61 @@ router.get('/api/load', async (req, res) => {
   const key = `jigsawdit:save:${postId}:${userId}`;
   const data = await redis.get(key);
 
-  if (!data) {
-    return res.json({ found: false });
+  // Get featured post from r/travel with gallery images
+  let featuredPost = null;
+  try {
+    const posts = await getPosts('travel');
+    
+    // Filter posts: must not be NSFW and must have a thumbnail
+    const filtered = posts
+      .filter((post) => !post.nsfw)
+      .filter((post) => post.thumbnail && post.thumbnail.url)
+      .sort((a, b) => b.score - a.score); // Sort by score descending
+
+    for (const post of filtered) {
+      // Try to get gallery images (gallery is a property, not a method)
+      const gallery = post.gallery;
+      
+      if (gallery && gallery.length > 0) {
+        // Extract gallery image URLs
+        const galleryImages = gallery.map((item: any) => item.url).filter(Boolean);
+        
+        featuredPost = {
+          id: post.id,
+          title: post.title,
+          authorName: post.authorName,
+          score: post.score,
+          url: post.url,
+          galleryImages: galleryImages,
+          thumbnail: post.thumbnail?.url,
+        };
+        
+        console.log('[LOAD] Featured post found:', post.title, 'with', galleryImages.length, 'gallery images');
+        break; // Found a post with gallery, use it
+      }
+    }
+  } catch (error) {
+    console.error('[LOAD] Error fetching featured post:', error);
   }
 
-  res.json({ found: true, data: JSON.parse(data) });
+  if (!data) {
+    return res.json({ 
+      found: false,
+      featuredPost: featuredPost
+    });
+  }
+
+  res.json({ 
+    found: true, 
+    data: JSON.parse(data),
+    featuredPost: featuredPost
+  });
 });
 
-// POST game score
+// POST Completion Comment
 router.post('/api/submitCompletionComment', async (req, res) => {
   try {
-    const { subredditName, postId, user } = context;
+    const { subredditName, postId } = context;
     if (!subredditName) {
       throw new Error('subredditName is required');
     }
@@ -312,120 +374,286 @@ router.post('/api/submitCompletionComment', async (req, res) => {
 
     res.json({ success: true, message: 'Completion comment posted!' });
   } catch (error) {
-    console.error('Failed to post completion comment:', error);
     res.status(500).json({ error: 'Failed to post comment' });
   }
 });
 
-// Scheduling try
-router.post('/internal/scheduler/post-daily-puzzle', async (req, res) => {
+// POST Upload Image
+router.post('/api/submitImage', async (_req, res) => {
+  try {
+    await media.upload({
+      url: 'https://media2.giphy.com/media/xTiN0CNHgoRf1Ha7CM/giphy.gif',
+      type: 'gif',
+    });
 
-//   **DAILY JIGSAWDIT IS LIVE!** Jigsaw piece rocket
+    res.json({ success: true, message: 'Image uploaded!' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to upload image' });
+  }
+});
 
-// **Theme**: Meme Monday  
-// **Image**: Top post from r/dankmemes (SFW)  
-// **Difficulty**: 4x4 (Medium)  
-// **Play →** [Interactive Post]
-
-// **LEADERBOARD**  
-// 1. u/snaps - 0:58 Jigsaw piece  
-// 2. u/fast - 1:12  
-// 3. u/you? - ???
-
-// **SHARE YOUR SOLVE**  
-  // In scheduler (run daily)
-  const themes = [
-    'Meme Monday',
-    'Aww Tuesday',
-    'WTF Wednesday',
-    'Throwback Thursday',
-    'User Friday',
-  ];
-  const today = new Date().getDay(); // 0 = Sunday
-  const theme = themes[today === 1 ? 0 : today - 1]; // adjust
+// POST User Post
+router.post('/api/userGeneratedContent', async (req, res) => {
+  const { title = '' } = req.body as {
+    image: string;
+    title: string;
+  };
 
   try {
-    // If the queue is empty, return
-    // const hasQueue = await redis.exists('data:queue');
-    // if (!hasQueue) {
-    //   res.status(200).json({
-    //     status: 'success',
-    //     message: 'No items to process',
-    //   });
-    //   return;
-    // }
+    const subreddit = await reddit.getCurrentSubreddit();
+    await reddit.submitPost({
+      title: title,
+      subredditName: subreddit.name,
+      richtext: [
+        {
+          e: 'text',
+          t: title,
+        },
+      ],
+    });
+    res.json({ success: true, message: 'Post created!' });
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to create post' });
+  }
+});
 
+// POST Convert image URL to base64
+router.post('/api/convertImageToBase64', async (req, res) => {
+  try {
+    const { imageUrl } = req.body as { imageUrl: string };
+    
+    if (!imageUrl) {
+      return res.status(400).json({ error: 'Image URL is required' });
+    }
+
+    console.log('[CONVERT] Converting image to base64:', imageUrl);
+
+    // Fetch the image from Reddit CDN
+    const response = await fetch(imageUrl);
+    
+    if (!response.ok) {
+      console.error('[CONVERT] Failed to fetch image:', response.status);
+      return res.status(502).json({ 
+        error: `Failed to fetch image: ${response.statusText}` 
+      });
+    }
+
+    // Get the image as buffer
+    const arrayBuffer = await response.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+    const contentType = response.headers.get('content-type') || 'image/jpeg';
+
+    // Convert to base64
+    const base64 = buffer.toString('base64');
+    const dataUrl = `data:${contentType};base64,${base64}`;
+
+    console.log('[CONVERT] Image converted successfully, size:', buffer.length, 'bytes');
+
+    res.json({ 
+      success: true,
+      dataUrl,
+      size: buffer.length
+    });
+  } catch (error) {
+    console.error('[CONVERT] Error:', error);
+    res.status(500).json({ 
+      error: 'Failed to convert image',
+      details: error instanceof Error ? error.message : 'Unknown error'
+    });
+  }
+});
+
+// POST Create Custom Puzzle Post
+router.post('/api/createCustomPuzzle', async (req, res) => {
+  const { imageUrl, gridSize, difficulty } = req.body as {
+    imageUrl: string;
+    gridSize: number;
+    difficulty: string;
+  };
+
+  try {
+    const { subredditName } = context;
+    if (!subredditName) {
+      return res.status(400).json({ error: 'subredditName is required' });
+    }
+
+    const username = (await reddit.getCurrentUsername()) ?? 'anonymous';
+    const difficultyLabel = difficulty.charAt(0).toUpperCase() + difficulty.slice(1);
+
+    const post = await reddit.submitCustomPost({
+      splash: {
+        appDisplayName: 'jigsawdit',
+        backgroundUri: 'default-splash.png',
+        buttonLabel: 'Play Puzzle',
+        description: `${difficultyLabel} puzzle (${gridSize}x${gridSize}) created by u/${username}`,
+        heading: 'Custom Jigsawdit Challenge!',
+        appIconUri: 'default-icon.png',
+      },
+      postData: {
+        imageUrl,
+        gridSize,
+        difficulty,
+        creatorUsername: username,
+        createdAt: new Date().toISOString(),
+      },
+      subredditName: subredditName,
+      title: `🧩 Custom puzzle by u/${username} - ${difficultyLabel} (${gridSize}x${gridSize})`,
+    });
+
+    res.json({ 
+      success: true, 
+      postId: post.id,
+      postUrl: `https://reddit.com/r/${subredditName}/comments/${post.id}`
+    });
+  } catch (error) {
+    console.error('Failed to create custom puzzle post:', error);
+    res.status(500).json({ error: 'Failed to create puzzle post' });
+  }
+});
+
+// GET Hot Posts from a Subreddit
+const getPosts = async (subreddit: string) => {
+  return await reddit
+    .getHotPosts({
+      subredditName: subreddit,
+      limit: 50,
+      pageSize: 50,
+    })
+    .all();
+};
+
+// POST Daily Scheduling
+router.post('/internal/scheduler/post-daily-puzzle', async (_req, res) => {
+  const themeConfig = [
+    { name: 'Travel Monday', subreddit: 'travel' },
+    { name: 'Aww Tuesday', subreddit: 'aww' },
+    { name: 'WTF Wednesday', subreddit: 'WTF' },
+    { name: 'Throwback Thursday', subreddit: 'OldSchoolCool' },
+    { name: 'Meme Friday', subreddit: 'memes' },
+  ];
+  
+  const today = new Date().getDay(); // 0 = Sunday, 1 = Monday, etc.
+  const themeIndex = today === 0 ? 4 : today - 1; // Sunday uses Friday's theme
+  const currentTheme:any = themeConfig[themeIndex];
+
+  try {
     const { subredditName } = context;
     if (!subredditName) {
       res.status(400).json({ status: 'error', message: 'subredditName is required' });
       return;
     }
 
-    // Create new post!
-    // await reddit.submitCustomPost({
-    //   subredditName: subredditName,
-    //   title: 'DAILY JIGSAWDIT: ',
-    //   splash: {
-    //     appDisplayName: 'Level ',
-    //     heading: 'Level ',
-    //     description: `Solve today’s r/aww  ${theme} masterpiece!`,
-    //     // backgroundUri: 'default-splash.png',
-    //     buttonLabel: 'Ckick to Start',
-    //     // appIconUri: 'default-icon.png'
-    //   },
+    console.log(`[SCHEDULER] Fetching posts from r/${currentTheme.subreddit} for ${currentTheme.name}`);
 
-    // });
-    await reddit.submitCustomPost({
+    // Get featured post from the theme's subreddit
+    const posts = await getPosts(currentTheme.subreddit);
+    
+    // Filter posts: must not be NSFW and must have a thumbnail
+    const filtered = posts
+      .filter((post) => !post.nsfw)
+      .filter((post) => post.thumbnail && post.thumbnail.url)
+      .sort((a, b) => b.score - a.score); // Sort by score descending
+
+    let featuredPost = null;
+    for (const post of filtered) {
+      // Try to get gallery images
+      const gallery = post.gallery;
+      
+      if (gallery && gallery.length > 0) {
+        // Extract gallery image URLs
+        const galleryImages = gallery.map((item: any) => item.url).filter(Boolean);
+        
+        if (galleryImages.length > 0) {
+          featuredPost = {
+            id: post.id,
+            title: post.title,
+            authorName: post.authorName,
+            score: post.score,
+            url: post.url,
+            galleryImages: galleryImages,
+            firstImage: galleryImages[0],
+          };
+          
+          console.log(`[SCHEDULER] Featured post found: "${post.title}" by u/${post.authorName} with ${galleryImages.length} images`);
+          break; // Found a post with gallery, use it
+        }
+      }
+    }
+
+    if (!featuredPost) {
+      console.error('[SCHEDULER] No suitable post found with gallery images');
+      return res.status(400).json({
+        status: 'error',
+        message: 'No suitable post found with gallery images',
+      });
+    }
+
+    // Create the daily puzzle post
+    const post = await reddit.submitCustomPost({
       splash: {
-        // Splash Screen Configuration
         appDisplayName: 'jigsawdit',
         backgroundUri: 'default-splash.png',
-        buttonLabel: 'Click to Start',
-        description: `Solve today’s r/aww  ${theme} masterpiece!`,
-        entryUri: 'index.html',
-        heading: 'Welcome to the Game!',
+        buttonLabel: 'Play Today\'s Puzzle',
+        description: `${currentTheme.name} puzzle by u/${featuredPost.authorName} - View original: ${featuredPost.url}`,
+        heading: `🧩 Daily Jigsawdit - ${currentTheme.name}`,
         appIconUri: 'default-icon.png',
       },
       postData: {
-        gameState: 'initial',
-        score: 0,
+        imageUrl: featuredPost.firstImage,
+        gridSize: 4,
+        difficulty: 'medium',
+        creatorUsername: featuredPost.authorName,
+        sourcePostUrl: featuredPost.url,
+        sourcePostTitle: featuredPost.title,
+        theme: currentTheme.name,
+        createdAt: new Date().toISOString(),
       },
       subredditName: subredditName,
-      title: 'DAILY JIGSAWDIT: ',
+      title: `🧩 Daily Jigsawdit - ${currentTheme.name} by u/${featuredPost.authorName}`,
     });
 
-    // Remove all items from the queue
-    // await redis.del('data:queue');
-    res.json({ status: 'success', message: `Posts created in subreddit ${subredditName}` });
+    console.log(`[SCHEDULER] Daily puzzle post created: ${post.id}`);
+
+    res.json({ 
+      status: 'success', 
+      message: `Daily puzzle created in r/${subredditName}`,
+      postId: post.id,
+      theme: currentTheme.name,
+      sourcePost: {
+        author: featuredPost.authorName,
+        title: featuredPost.title,
+        url: featuredPost.url,
+      }
+    });
   } catch (error) {
+    console.error('[SCHEDULER] Error:', error);
     res.status(400).json({
       status: 'error',
       message: 'Scheduled action failed',
+      details: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 });
 
-router.get<{ postId: string }, InitResponse | { status: string; message: string }>(
-  '/api/postId',
-  async (_req, res): Promise<void> => {
-    const { postId } = context;
 
-    if (!postId) {
-      res.status(400).json({
-        status: 'error',
-        message: 'postId is required but missing from context',
-      });
-      return;
-    }
-    res.json({ postId });
+router.get('/api/postId', async (_req, res): Promise<void> => {
+  const { postId } = context;
+
+  if (!postId) {
+    res.status(400).json({
+      status: 'error',
+      message: 'postId is required but missing from context',
+    });
+    return;
   }
-);
+  res.json({ postId: postId });
+});
 
 // Helper: get yesterday's date string
 function getYesterday(date: string): string {
   const d = new Date(date);
   d.setDate(d.getDate() - 1);
-  return d.toISOString().split('T')[0];
+  return d.toISOString().split('T')[0] as string;
 }
 
 // Use router middleware

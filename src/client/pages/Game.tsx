@@ -3,9 +3,10 @@ import { PuzzleCanvas } from '../components/PuzzleCanvas';
 import { PieceTray } from '../components/PieceTray';
 import { Timer } from '../components/Timer';
 import { ReferenceImage } from '../components/ReferenceImage';
-import { Leaderboard } from '../components/Leaderboard';
+// import { Leaderboard } from '../components/Leaderboard';
 import { CompletionModal } from '../components/CompletionModal';
-import { ProgressBar } from '../components/ProgressBar';
+import { PuzzleGenerator } from '../components/PuzzleGenerator';
+// import { ProgressBar } from '../components/ProgressBar';
 import { GameSettings } from '../components/GameSettings';
 import { LeaderboardModal } from '../components/LeaderboardModal';
 import { usePuzzleState } from '../hooks/usePuzzleState';
@@ -14,23 +15,33 @@ import { useSocialShare } from '../hooks/useSocialShare';
 import { Puzzle } from 'lucide-react';
 import { ArrowLeft, Trophy } from 'lucide-react';
 
+interface CustomPuzzleData {
+  imageUrl: string;
+  gridSize: number;
+  difficulty: string;
+  creatorUsername: string;
+}
+
 interface GameProps {
   username: string;
   puzzleId: string;
   onBackToHome: () => void;
+  customPuzzle?: CustomPuzzleData | null | undefined;
 }
 
 const DEFAULT_IMAGE = '/puzzle-001.jpeg';
 
-export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
+export const Game = ({ username, puzzleId, onBackToHome, customPuzzle }: GameProps) => {
   // ────── React state (unchanged) ──────
-  const [gridSize, setGridSize] = useState(4);
-  const [imageUrl, setImageUrl] = useState(DEFAULT_IMAGE);
+  const [gridSize, setGridSize] = useState(customPuzzle?.gridSize || 4);
+  const [imageUrl, setImageUrl] = useState(customPuzzle?.imageUrl || DEFAULT_IMAGE);
+  const isCustomPuzzle = !!customPuzzle;
   const [draggingPieceId, setDraggingPieceId] = useState<string | null>(null);
   const [showCompletionModal, setShowCompletionModal] = useState(false);
   const [isLeaderboardOpen, setIsLeaderboardOpen] = useState(false);
+  const [showPuzzleGenerator, setShowPuzzleGenerator] = useState(false);
   const [previousProgress, setPreviousProgress] = useState(0);
-  const [scoreSubmitted, setScoreSubmitted] = useState(false);
+  // const [scoreSubmitted, setScoreSubmitted] = useState(false);
 
   const { gameState, isLoading, error, startTimer, placePiece, getProgress, resetPuzzle } =
     usePuzzleState(imageUrl, gridSize);
@@ -42,7 +53,7 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     refreshLeaderboard,
   } = useLeaderboard(puzzleId);
 
-  const { submitCompletionComment } = useSocialShare();
+  const { submitCompletionComment, userGeneratedContent } = useSocialShare();
 
   const progress = getProgress();
 
@@ -51,7 +62,7 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     if (gameState.isComplete && !showCompletionModal) {
       setShowCompletionModal(true);
       submitScore(username, gameState.elapsedTime);
-      setScoreSubmitted(true);
+      // setScoreSubmitted(true);
     }
   }, [gameState.isComplete, showCompletionModal, username, submitScore]);
 
@@ -85,6 +96,22 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     setPreviousProgress(0);
   };
 
+  const handleCreateCustomPuzzle = (config: {
+    imageUrl: string;
+    difficulty: 'easy' | 'medium' | 'hard';
+    gridSize: number;
+  }) => {
+    setImageUrl(config.imageUrl);
+    setGridSize(config.gridSize);
+    setShowCompletionModal(false);
+    setShowPuzzleGenerator(false);
+    resetPuzzle();
+    setPreviousProgress(0);
+
+    // Optional: Post user generated content
+    userGeneratedContent(config.imageUrl, 'User Generated Content');
+  };
+
   const handleShare = () => {
     // const timeStr = gameState.elapsedTime ? `${Math.floor(gameState.elapsedTime / 60)}m ${gameState.elapsedTime % 60}s` : 'unknown time';
     // const streakEmoji = streak >= 10 ? 'fire' : streak >= 3 ? 'fire' : '';
@@ -107,13 +134,15 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     // const shareText =
     //   `🧩 Jigsawdit in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!` +
     //   `\n#Jigsawdit`;
-      const shareText =
-      `🧩 Jigsawdit in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!`;
+    const shareText = `🧩 Jigsawdit in ${Math.floor(gameState.elapsedTime / 60)}:${(gameState.elapsedTime % 60).toString().padStart(2, '0')}!`;
     submitCompletionComment(shareText);
     onBackToHome();
   };
 
   const handleGridSizeChange = (size: number) => {
+    if (isCustomPuzzle) {
+      return; // Don't allow grid size changes for custom puzzles
+    }
     if (gameState.pieces.some((p) => p.isPlaced)) {
       const confirmed = window.confirm('Changing grid size will reset your progress. Continue?');
       if (!confirmed) return;
@@ -122,7 +151,17 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
     setPreviousProgress(0);
   };
 
-  const pieceSize = 60;
+  // const pieceSize = 60;
+  const getPieceSize = () => {
+    if (typeof window !== 'undefined') {
+      if (window.innerWidth < 640) return 64;
+      if (window.innerWidth < 768) return 70;
+      return 75;
+    }
+    return 75;
+  };
+
+  const pieceSize = getPieceSize();
 
   if (isLoading) {
     return (
@@ -166,6 +205,13 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
           </button>
 
           <button
+            onClick={() => setShowPuzzleGenerator(true)}
+            className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg shadow-md border-2 border-gray-200 hover:bg-gray-50 transition-colors"
+          >
+            <span className="font-medium">create puzzle</span>
+          </button>
+
+          <button
             onClick={() => setIsLeaderboardOpen(true)}
             className="flex items-center gap-2 px-4 py-2 bg-white rounded-lg shadow-md border-2 border-gray-200 hover:bg-gray-50 transition-colors"
           >
@@ -175,18 +221,30 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
         </div>
 
         <div className="max-w-4xl mx-auto space-y-6">
+          {isCustomPuzzle && customPuzzle && (
+            <div className="bg-purple-50 border-2 border-purple-200 rounded-lg p-4 text-center">
+              <p className="text-purple-800 font-semibold">
+                🎨 Custom Puzzle by u/{customPuzzle.creatorUsername || 'anonymous'}
+              </p>
+              <p className="text-purple-600 text-sm">
+                {customPuzzle.difficulty ? customPuzzle.difficulty.charAt(0).toUpperCase() + customPuzzle.difficulty.slice(1) : 'Medium'} • {customPuzzle.gridSize}x{customPuzzle.gridSize}
+              </p>
+            </div>
+          )}
+
           <div className="flex flex-wrap items-center justify-center gap-8">
             <Timer
               elapsedTime={gameState.elapsedTime}
               isRunning={!!gameState.startTime && !gameState.isComplete}
-              progress={progress}
             />
             <ReferenceImage imageUrl={imageUrl} />
-            <GameSettings
-              gridSize={gridSize}
-              onGridSizeChange={handleGridSizeChange}
-              disabled={gameState.pieces.some((p) => p.isPlaced)}
-            />
+            {!isCustomPuzzle && (
+              <GameSettings
+                gridSize={gridSize}
+                onGridSizeChange={handleGridSizeChange}
+                disabled={gameState.pieces.some((p) => p.isPlaced)}
+              />
+            )}
           </div>
 
           <div className="flex justify-center">
@@ -214,6 +272,14 @@ export const Game = ({ username, puzzleId, onBackToHome }: GameProps) => {
           onPlayAgain={handlePlayAgain}
           onShare={handleShare}
           onClose={() => setShowCompletionModal(false)}
+          onCreateCustom={() => setShowPuzzleGenerator(true)}
+        />
+      )}
+
+      {showPuzzleGenerator && (
+        <PuzzleGenerator
+          onGeneratePuzzle={handleCreateCustomPuzzle}
+          onClose={() => setShowPuzzleGenerator(false)}
         />
       )}
 

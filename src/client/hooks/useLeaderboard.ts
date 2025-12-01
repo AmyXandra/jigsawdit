@@ -1,5 +1,11 @@
 import { useState, useEffect } from 'react';
 
+export interface LeaderboardEntry {
+  username: string;
+  time: number;
+  completedAt?: string;
+}
+
 export const useLeaderboard = (puzzleId: string) => {
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [isLoading, setIsLoading] = useState(true);

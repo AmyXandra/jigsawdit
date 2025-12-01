@@ -1,17 +1,14 @@
 import { useState } from 'react';
-import { Image, X } from 'lucide-react';
+import { X } from 'lucide-react';
 
 interface ReferenceImageProps {
   imageUrl: string;
-  showByDefault?: boolean;
 }
 
 export const ReferenceImage = ({
   imageUrl,
-  showByDefault = true,
 }: ReferenceImageProps) => {
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [isVisible, setIsVisible] = useState(showByDefault);
 
   return (
     <>
